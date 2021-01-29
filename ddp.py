@@ -251,7 +251,7 @@ def train(args, model):
                              dict(path=saved_optimizer_file))
                     with warnings.catch_warnings(record=True) as caught_warnings:
                         torch.save(scheduler.state_dict(), saved_scheduler_file)
-                    reissue_pt_warnings(caught_warnings)
+                        reissue_pt_warnings(caught_warnings)
                     log.info("Saved scheduler states.",
                              dict(path=saved_scheduler_file))
 
