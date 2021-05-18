@@ -191,6 +191,8 @@ def train(args, model):
 
     # Training Loop
     for epoch in trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0], leave=False):
+        if args.local_rank != -1:
+            train_sampler.set_epoch(epoch)
         with tqdm(train_dataloader, desc=f"Epoch {epoch}", disable=args.local_rank not in [-1, 0], leave=False) as batch_iterator:
             for step, (x, y) in enumerate(batch_iterator):
                 # Forward pass
