@@ -1,12 +1,10 @@
-from datetime import tzinfo
 import logging
-from threading import local
-from torch.autograd import backward
 from tqdm import tqdm
 import datetime
 import collections
 import warnings
 import sys
+import torch.distributed as dist
 
 FORMAT = "[%(asctime)s] [%(levelname)-8s] [%(node_rank)d ^ %(local_rank)d] [%(module)s] [%(filename)s:%(lineno)d] [%(message)s]"
 
@@ -82,3 +80,22 @@ def redirect_warnings_to_logger(logger):
         logger.warning(message, dict(filename=filename, lineno=lineno))
 
     warnings.showwarning = logwarn
+
+def get_rank():
+    if not dist.is_available():
+        return 0
+    if not dist.is_initialized():
+        return 0
+    return dist.get_rank()
+
+
+def get_world_size():
+    if not dist.is_available():
+        return 1
+    if not dist.is_initialized():
+        return 1
+    return dist.get_world_size()
+
+
+def is_main_process():
+    return get_rank() == 0

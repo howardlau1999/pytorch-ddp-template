@@ -22,6 +22,7 @@ from utils import getLoggerWithRank, redirect_warnings_to_logger
 from dataset import FooDataset
 import argparse
 import warnings
+from utils import is_main_process
 
 PT_LR_SCHEDULER_WARNING = "Please also save or load the state of the optimzer when saving or loading the scheduler."
 
@@ -81,7 +82,7 @@ def setup(args):
     if sys.platform == 'win32':
         raise NotImplementedError("Unsupported Platform")
     else:
-        args.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+        args.local_rank = int(os.environ.get("LOCAL_RANK", str(args.local_rank)))
         log = getLoggerWithRank(__name__, int(
             os.environ.get("RANK", "-1")), args.local_rank)
         redirect_warnings_to_logger(log)
@@ -124,7 +125,7 @@ def evaluate(args, model):
 
 def train(args, model):
     # Setup TensorBoard for visualization
-    if args.local_rank in [-1, 0]:
+    if is_main_process():
         tb_writer = SummaryWriter()
 
     # Transfer the model to the proper device
@@ -161,7 +162,25 @@ def train(args, model):
 
     # Loss Function, Optimizer, Scheduler
     criterion = nn.MSELoss().to(args.device)
-    optimizer = optim.SGD(model.parameters(), lr=1e-3)
+    if args.fp16:
+        try:
+            from apex.optimizers import FusedAdam
+            from apex import amp
+        except ImportError:
+            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+
+        optimizer = FusedSGD(model.parameters(),
+                              lr=1e-3)
+        model, optimizer = amp.initialize(
+            model,
+            optimizers=optimizer,
+            opt_level=args.fp16_opt_level,
+            keep_batchnorm_fp32=False,
+            loss_scale="dynamic" if args.loss_scale == 0 else args.loss_scale,
+        )
+        log.info("FP16 launched")
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=1e-3)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
@@ -224,7 +243,7 @@ def train(args, model):
                     global_step += 1
 
                 # Log metrics
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                if is_main_process() and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Only evaluate when single GPU otherwise metrics may not average well
                     tb_writer.add_scalar(
                         "lr", scheduler.get_last_lr()[0], global_step)
@@ -233,7 +252,7 @@ def train(args, model):
                     logging_loss = tr_loss
 
                 # Save model checkpoint. It is important only one process should save the model.
-                if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                if is_main_process() and args.save_steps > 0 and global_step % args.save_steps == 0:
                     output_dir = os.path.join(
                         args.output_dir, "checkpoint-{}".format(global_step))
                     save_model(model, output_dir)
@@ -283,6 +302,10 @@ def main():
     parser.add_argument("--num_train_epochs", type=int, default=10)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--max_grad_norm", type=float, default=1000.)
+    parser.add_argument("--local_rank", type=int, default=-1)
+    parser.add_argument("--fp16", action="store_true")
+    parser.add_argument("--loss_scale", type=int, default=0)
+    parser.add_argument("--fp16_opt_level", type=str, default="O2")
     args = parser.parse_args()
     setup(args)
     model = FooModel()
